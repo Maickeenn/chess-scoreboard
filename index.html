@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess Score Overlay</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: rgba(0, 0, 0, 0); /* Transparente para o OBS */
+            font-family: Arial, sans-serif;
+            color: white;
+            font-size: 24px;
+            text-align: center;
+        }
+        .scoreboard {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border-radius: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid white;
+        }
+        th {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="scoreboard">
+        <table>
+            <thead>
+                <tr>
+                    <th colspan="4">Placar</th>
+                </tr>
+                <tr>
+                    <th>V</th>
+                    <th>E</th>
+                    <th>D</th>
+                    <th>+-</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td id="wins">0</td>
+                    <td id="draws">0</td>
+                    <td id="losses">0</td>
+                    <td id="ratingChange">0</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                username: params.get('username'),
+                datetime: params.get('datetime'),
+                mode: params.get('mode')
+            };
+        }
+
+        function parseDateTime(input) {
+            const dateTimeParts = input.split(' ');
+            const dateParts = dateTimeParts[0].split('-');
+            let timeParts = ['00', '00'];
+
+            if (dateTimeParts[1]) {
+                timeParts = dateTimeParts[1].split(':');
+            }
+
+            const year = parseInt(dateParts[0], 10);
+            const month = parseInt(dateParts[1], 10) - 1;
+            const day = parseInt(dateParts[2], 10);
+            const hours = parseInt(timeParts[0], 10);
+            const minutes = parseInt(timeParts[1], 10);
+
+            return new Date(year, month, day, hours, minutes);
+        }
+
+        function filterByMode(game, mode) {
+            switch (mode.toUpperCase()) {
+                case 'B': // Bullet
+                    return game.time_class === 'bullet';
+                case 'BL': // Blitz
+                    return game.time_class === 'blitz';
+                case 'R': // Rapid
+                    return game.time_class === 'rapid';
+                case 'C': // Classic
+                    return game.time_class === 'daily';
+                default:
+                    return true;
+            }
+        }
+
+        function startUpdating() {
+            const params = getUrlParams();
+            const username = params.username;
+            const datetimeString = params.datetime;
+            const mode = params.mode || '';
+
+            if (!username || !datetimeString) {
+                console.error("Nome de usuário ou data inválidos. Por favor, insira valores corretos.");
+                return;
+            }
+
+            const datetime = parseDateTime(datetimeString);
+
+            getChessStats(username, datetime, mode);
+            setInterval(() => getChessStats(username, datetime, mode), 1000);
+        }
+
+        async function getChessStats(username, startDate, mode) {
+            const response = await fetch(`https://api.chess.com/pub/player/${username}/games/archives`);
+            const archives = await response.json();
+            const latestMonthUrl = archives.archives[archives.archives.length - 1];
+            const gamesResponse = await fetch(latestMonthUrl);
+            const games = await gamesResponse.json();
+
+            let wins = 0;
+            let draws = 0;
+            let losses = 0;
+            let ratingChange = 0;
+            let lastRating = null;
+
+            games.games.forEach(game => {
+                const gameDate = new Date(game.end_time * 1000);
+                if (gameDate < startDate) {
+                    if (filterByMode(game, mode)) {
+                        if (game.white.username.toLowerCase() === username.toLowerCase()) {
+                            lastRating = game.white.rating;
+                        } else if (game.black.username.toLowerCase() === username.toLowerCase()) {
+                            lastRating = game.black.rating;
+                        }
+                    }
+                }
+            });
+
+            games.games.forEach(game => {
+                const gameDate = new Date(game.end_time * 1000);
+                if (gameDate >= startDate) {
+                    if (filterByMode(game, mode)) {
+                        let result = "";
+                        let playerRating = 0;
+
+                        if (game.white.username.toLowerCase() === username.toLowerCase()) {
+                            result = game.white.result;
+                            playerRating = game.white.rating;
+                        } else {
+                            result = game.black.result;
+                            playerRating = game.black.rating;
+                        }
+
+                        if (lastRating !== null) {
+                            ratingChange += (playerRating - lastRating);
+                        }
+                        lastRating = playerRating;
+
+                        if (result === 'win') {
+                            wins++;
+                        } else if (['agreed', 'repetition', 'stalemate', 'insufficient'].includes(result)) {
+                            draws++;
+                        } else if (['checkmated', 'timeout', 'resigned', 'abandoned'].includes(result)) {
+                            losses++;
+                        }
+                    }
+                }
+            });
+
+            document.getElementById('wins').innerText = wins;
+            document.getElementById('draws').innerText = draws;
+            document.getElementById('losses').innerText = losses;
+
+            const ratingChangeElement = document.getElementById('ratingChange');
+            ratingChangeElement.innerText = (ratingChange >= 0 ? `+${ratingChange}` : ratingChange);
+
+            if (ratingChange > 0) {
+                ratingChangeElement.style.color = "green";
+            } else if (ratingChange < 0) {
+                ratingChangeElement.style.color = "red";
+            } else {
+                ratingChangeElement.style.color = "white";
+            }
+        }
+
+        window.onload = startUpdating;
+    </script>
+</body>
+</html>
